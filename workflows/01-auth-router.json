@@ -2,71 +2,56 @@
   "name": "01 — Auth & Router",
   "nodes": [
     {
-      "id": "11111111-0001-4000-8000-000000000001",
+      "id": "aa000001-0001-4000-8000-000000000001",
       "name": "Chat Trigger",
       "type": "@n8n/n8n-nodes-langchain.chatTrigger",
       "typeVersion": 1.1,
       "position": [0, 300],
       "webhookId": "22222222-0001-4000-8000-000000000001",
-      "parameters": {
-        "options": {}
-      }
+      "parameters": {"options": {}}
     },
     {
-      "id": "11111111-0001-4000-8000-000000000002",
+      "id": "aa000001-0001-4000-8000-000000000002",
       "name": "Parse Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [260, 300],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const item = $input.first();\n\n// Sanitize: strip control chars that could pollute prompts or SQL\nconst chatInput = (item.json.chatInput || '')\n  .replace(/[\\x00-\\x08\\x0B-\\x0C\\x0E-\\x1F]/g, '')\n  .trim()\n  .substring(0, 500);\n\nconst sessionId = (item.json.sessionId || '').trim();\n\n// Detect login command: \"login <pseudo> <password>\"\nconst loginMatch = chatInput.match(\n  /^(?:login|connexion)\\s+(\\S+)\\s+(.+)$/i\n);\n\n// Early detection of register intent (for unauthenticated users)\nconst isRegisterIntent = /^(?:register|inscription|cr[eé]er?\\s+(?:un\\s+)?compte)/i.test(chatInput);\n\nreturn [{\n  json: {\n    chatInput,\n    sessionId,\n    isLoginAttempt: loginMatch !== null,\n    loginPseudo: loginMatch ? loginMatch[1] : null,\n    loginPassword: loginMatch ? loginMatch[2].trim() : null,\n    isRegisterIntent\n  }\n}];"
+        "jsCode": "const item = $input.first();\nconst chatInput = (item.json.chatInput || '')\n  .replace(/[\\x00-\\x08\\x0B-\\x0C\\x0E-\\x1F]/g, '')\n  .trim()\n  .substring(0, 500);\nconst sessionId = (item.json.sessionId || '').trim();\nconst loginMatch = chatInput.match(/^(?:login|connexion)\\s+(\\S+)\\s+(.+)$/i);\nconst isRegisterIntent = /^(?:register|inscription|cr[eé]er?\\s+(?:un\\s+)?compte)/i.test(chatInput);\nreturn [{\n  json: {\n    chatInput,\n    sessionId,\n    isLoginAttempt: loginMatch !== null,\n    loginPseudo: loginMatch ? loginMatch[1] : null,\n    loginPassword: loginMatch ? loginMatch[2].trim() : null,\n    isRegisterIntent\n  }\n}];"
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000003",
-      "name": "Get Session",
+      "id": "aa000001-0001-4000-8000-000000000003",
+      "name": "Check Pending Reg",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [520, 300],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT user_id::text, pseudo, role FROM sessions WHERE session_id = $1 AND expires_at > now() LIMIT 1",
+        "query": "SELECT step FROM pending_registrations WHERE session_id = $1 AND expires_at > now() LIMIT 1",
         "options": {
           "alwaysOutputData": true,
           "queryReplacement": "={{ $json.sessionId }}"
         }
       },
-      "credentials": {
-        "postgres": {
-          "id": "1",
-          "name": "persona-db"
-        }
-      }
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
     },
     {
-      "id": "11111111-0001-4000-8000-000000000004",
-      "name": "Session Valid?",
+      "id": "aa000001-0001-4000-8000-000000000004",
+      "name": "Pending Reg?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [780, 300],
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
           "conditions": [
             {
-              "id": "c1",
-              "leftValue": "={{ $json.user_id }}",
+              "id": "c0",
+              "leftValue": "={{ $json.step }}",
               "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "notEmpty",
-                "singleValue": true
-              }
+              "operator": {"type": "string", "operation": "notEmpty", "singleValue": true}
             }
           ],
           "combinator": "and"
@@ -74,22 +59,96 @@
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000005",
-      "name": "Prepare Ollama Prompt",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1040, 80],
+      "id": "aa000001-0001-4000-8000-000000000005",
+      "name": "Set Register Intent",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1040, 160],
       "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const sessionData = $input.first().json;\nconst chatInput = $('Parse Input').first().json.chatInput;\n\n// Anti-prompt-injection: wrap user message in a neutral container\n// and strip any quote chars that could escape the wrapper\nconst safeInput = chatInput\n  .replace(/[\"\\\\]/g, (c) => ({ '\"': \"'\", '\\\\': '' })[c])\n  .substring(0, 200);\n\nconst prompt = `Classify this user message into exactly one category.\n\nCategories:\n- register : user wants to create an account or sign up\n- update_prefs : user wants to change email, interests, newsletter time\n- newsletter : user wants to receive their newsletter now or asks about it\n- unsubscribe : user wants to unsubscribe or delete account\n- help : user asks what they can do or asks for help\n- unknown : none of the above\n\nMessage: \"${safeInput}\"\n\nReply with ONLY the category name, nothing else.`;\n\nreturn [{\n  json: {\n    user_id: sessionData.user_id,\n    pseudo: sessionData.pseudo,\n    role: sessionData.role,\n    chatInput,\n    sessionId: $('Parse Input').first().json.sessionId,\n    ollamaPrompt: prompt\n  }\n}];"
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {"id": "x1", "name": "intent", "value": "register", "type": "string"},
+            {"id": "x2", "name": "chatInput", "value": "={{ $('Parse Input').first().json.chatInput }}", "type": "string"},
+            {"id": "x3", "name": "sessionId", "value": "={{ $('Parse Input').first().json.sessionId }}", "type": "string"},
+            {"id": "x4", "name": "user_id", "value": "", "type": "string"},
+            {"id": "x5", "name": "pseudo", "value": "", "type": "string"},
+            {"id": "x6", "name": "role", "value": "user", "type": "string"}
+          ]
+        },
+        "includeOther": false
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000006",
+      "id": "aa000001-0001-4000-8000-000000000006",
+      "name": "Continue Registration",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1300, 160],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "value": "0",
+          "__rl": true,
+          "mode": "id"
+        },
+        "options": {"waitForSubWorkflow": true}
+      }
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000007",
+      "name": "Get Session",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, 440],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT user_id::text, pseudo, role FROM sessions WHERE session_id = $1 AND expires_at > now() LIMIT 1",
+        "options": {
+          "alwaysOutputData": true,
+          "queryReplacement": "={{ $('Parse Input').first().json.sessionId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000008",
+      "name": "Session Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1300, 440],
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.user_id }}",
+              "rightValue": "",
+              "operator": {"type": "string", "operation": "notEmpty", "singleValue": true}
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000009",
+      "name": "Prepare Ollama Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 240],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const sessionData = $input.first().json;\nconst chatInput = $('Parse Input').first().json.chatInput;\nconst safeInput = chatInput.replace(/[\"\\\\]/g, (c) => ({ '\"': \"'\", '\\\\': '' })[c]).substring(0, 200);\nconst prompt = `Classify this user message into exactly one category.\\n\\nCategories:\\n- register : user wants to create an account or sign up\\n- update_prefs : user wants to change email, interests, newsletter time\\n- newsletter : user wants to receive their newsletter now or asks about it\\n- unsubscribe : user wants to unsubscribe or delete account\\n- help : user asks what they can do or asks for help\\n- unknown : none of the above\\n\\nMessage: \"${safeInput}\"\\n\\nReply with ONLY the category name, nothing else.`;\nreturn [{\n  json: {\n    user_id: sessionData.user_id,\n    pseudo: sessionData.pseudo,\n    role: sessionData.role,\n    chatInput,\n    sessionId: $('Parse Input').first().json.sessionId,\n    ollamaPrompt: prompt\n  }\n}];"
+      }
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000010",
       "name": "Classify Intent",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1300, 80],
+      "position": [1820, 240],
       "parameters": {
         "method": "POST",
         "url": "http://ollama:11434/api/generate",
@@ -100,251 +159,166 @@
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000007",
+      "id": "aa000001-0001-4000-8000-000000000011",
       "name": "Parse Intent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1560, 80],
+      "position": [2080, 240],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const ollamaResp = $input.first().json;\nconst prev = $('Prepare Ollama Prompt').first().json;\n\n// Ollama returns { response: \"register\", done: true, ... }\nconst rawResponse = (ollamaResp.response || '').trim().toLowerCase();\n\n// Normalize to known intents — guards against Ollama adding punctuation\nconst KNOWN = ['register', 'update_prefs', 'newsletter', 'unsubscribe', 'help'];\nconst intent = KNOWN.find(k => rawResponse.startsWith(k)) || 'unknown';\n\nreturn [{\n  json: {\n    user_id: prev.user_id,\n    pseudo: prev.pseudo,\n    role: prev.role,\n    chatInput: prev.chatInput,\n    sessionId: prev.sessionId,\n    intent,\n    rawOllamaResponse: rawResponse\n  }\n}];"
+        "jsCode": "const ollamaResp = $input.first().json;\nconst prev = $('Prepare Ollama Prompt').first().json;\nconst rawResponse = (ollamaResp.response || '').trim().toLowerCase();\nconst KNOWN = ['register','update_prefs','newsletter','unsubscribe','help'];\nconst intent = KNOWN.find(k => rawResponse.startsWith(k)) || 'unknown';\nreturn [{\n  json: {\n    user_id: prev.user_id,\n    pseudo: prev.pseudo,\n    role: prev.role,\n    chatInput: prev.chatInput,\n    sessionId: prev.sessionId,\n    intent,\n    rawOllamaResponse: rawResponse\n  }\n}];"
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000008",
+      "id": "aa000001-0001-4000-8000-000000000012",
       "name": "Route Intent",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
-      "position": [1820, 80],
+      "position": [2340, 240],
       "parameters": {
         "mode": "rules",
         "rules": {
           "rules": [
-            {
-              "outputKey": "0",
-              "conditions": {
-                "options": {"caseSensitive": false, "typeValidation": "loose"},
-                "conditions": [{"id": "r1", "leftValue": "={{ $json.intent }}", "rightValue": "register", "operator": {"type": "string", "operation": "equals"}}],
-                "combinator": "and"
-              }
-            },
-            {
-              "outputKey": "1",
-              "conditions": {
-                "options": {"caseSensitive": false, "typeValidation": "loose"},
-                "conditions": [{"id": "r2", "leftValue": "={{ $json.intent }}", "rightValue": "update_prefs", "operator": {"type": "string", "operation": "equals"}}],
-                "combinator": "and"
-              }
-            },
-            {
-              "outputKey": "2",
-              "conditions": {
-                "options": {"caseSensitive": false, "typeValidation": "loose"},
-                "conditions": [{"id": "r3", "leftValue": "={{ $json.intent }}", "rightValue": "newsletter", "operator": {"type": "string", "operation": "equals"}}],
-                "combinator": "and"
-              }
-            },
-            {
-              "outputKey": "3",
-              "conditions": {
-                "options": {"caseSensitive": false, "typeValidation": "loose"},
-                "conditions": [{"id": "r4", "leftValue": "={{ $json.intent }}", "rightValue": "unsubscribe", "operator": {"type": "string", "operation": "equals"}}],
-                "combinator": "and"
-              }
-            },
-            {
-              "outputKey": "4",
-              "conditions": {
-                "options": {"caseSensitive": false, "typeValidation": "loose"},
-                "conditions": [{"id": "r5", "leftValue": "={{ $json.intent }}", "rightValue": "help", "operator": {"type": "string", "operation": "equals"}}],
-                "combinator": "and"
-              }
-            }
+            {"outputKey": "0", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r1", "leftValue": "={{ $json.intent }}", "rightValue": "register", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
+            {"outputKey": "1", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r2", "leftValue": "={{ $json.intent }}", "rightValue": "update_prefs", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
+            {"outputKey": "2", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r3", "leftValue": "={{ $json.intent }}", "rightValue": "newsletter", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
+            {"outputKey": "3", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r4", "leftValue": "={{ $json.intent }}", "rightValue": "unsubscribe", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
+            {"outputKey": "4", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r5", "leftValue": "={{ $json.intent }}", "rightValue": "help", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}}
           ]
         },
         "fallbackOutput": "extra"
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000009",
-      "name": "WF2: Register (stub)",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [2080, -220],
+      "id": "aa000001-0001-4000-8000-000000000013",
+      "name": "WF2: Register",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2600, 0],
       "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            {"id": "s1", "name": "output", "value": "[WF2 Inscription — implémenté au Push 3]\n\nPour créer votre compte, il me faudra :\n1. Un pseudo\n2. Votre adresse email\n3. Un mot de passe\n4. Vos centres d'intérêt (ex : IA, science, crypto)\n5. L'heure souhaitée pour recevoir votre newsletter (0-23h)", "type": "string"}
-          ]
-        },
-        "includeOther": false
+        "source": "database",
+        "workflowId": {"value": "0", "__rl": true, "mode": "id"},
+        "options": {"waitForSubWorkflow": true}
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000010",
-      "name": "WF2: Préférences (stub)",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [2080, -80],
+      "id": "aa000001-0001-4000-8000-000000000014",
+      "name": "WF2: Update Prefs",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2600, 140],
       "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            {"id": "s2", "name": "output", "value": "[WF2 Préférences — implémenté au Push 3]\n\nQue souhaitez-vous modifier ?\n• email — votre adresse email\n• intérêts — vos centres d'intérêt\n• horaire — l'heure d'envoi (0-23h)", "type": "string"}
-          ]
-        },
-        "includeOther": false
+        "source": "database",
+        "workflowId": {"value": "0", "__rl": true, "mode": "id"},
+        "options": {"waitForSubWorkflow": true}
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000011",
-      "name": "WF3: Newsletter (stub)",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [2080, 60],
+      "id": "aa000001-0001-4000-8000-000000000015",
+      "name": "WF3: Newsletter",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2600, 280],
       "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            {"id": "s3", "name": "output", "value": "[WF3 Newsletter — implémenté au Push 4]\n\nJe vais récupérer les dernières actus correspondant à vos intérêts et vous envoyer un résumé par email.", "type": "string"}
-          ]
-        },
-        "includeOther": false
+        "source": "database",
+        "workflowId": {"value": "0", "__rl": true, "mode": "id"},
+        "options": {"waitForSubWorkflow": true}
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000012",
-      "name": "WF4: Désinscription (stub)",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [2080, 200],
+      "id": "aa000001-0001-4000-8000-000000000016",
+      "name": "WF4: Unsubscribe",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2600, 420],
       "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            {"id": "s4", "name": "output", "value": "[WF4 Désinscription — implémenté au Push 6]\n\nVous pouvez aussi utiliser le lien de désinscription en bas de chaque newsletter.\n\nConformément au RGPD, vos données personnelles seront anonymisées.", "type": "string"}
-          ]
-        },
-        "includeOther": false
+        "source": "database",
+        "workflowId": {"value": "0", "__rl": true, "mode": "id"},
+        "options": {"waitForSubWorkflow": true}
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000013",
+      "id": "aa000001-0001-4000-8000-000000000017",
       "name": "Help",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [2080, 340],
+      "position": [2600, 560],
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [
-            {"id": "s5", "name": "output", "value": "=Bonjour {{ $json.pseudo }} ! Voici ce que vous pouvez faire :\n\n• newsletter — recevoir votre newsletter maintenant\n• préférences — modifier vos centres d'intérêt, email ou horaire d'envoi\n• register / inscription — créer un compte (si pas encore fait)\n• désinscription — se désinscrire de Persona\n\nPersona respecte votre vie privée : vos données restent sur notre serveur local, aucune donnée n'est partagée avec des tiers.", "type": "string"}
-          ]
+          "assignments": [{"id": "a1", "name": "output", "value": "=Bonjour {{ $json.pseudo }} ! Voici ce que vous pouvez faire :\n\n• newsletter — recevoir votre newsletter maintenant\n• préférences — modifier vos centres d'intérêt, email ou horaire\n• register / inscription — créer un compte (si pas encore fait)\n• désinscription — se désinscrire de Persona", "type": "string"}]
         },
         "includeOther": false
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000014",
+      "id": "aa000001-0001-4000-8000-000000000018",
       "name": "Unknown Intent",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [2080, 480],
+      "position": [2600, 700],
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [
-            {"id": "s6", "name": "output", "value": "=Je n'ai pas bien compris votre demande, {{ $json.pseudo }}.\n\nEssayez : newsletter, préférences, désinscription, ou aide.", "type": "string"}
-          ]
+          "assignments": [{"id": "a2", "name": "output", "value": "=Je n'ai pas bien compris votre demande, {{ $json.pseudo }}.\n\nEssayez : newsletter, préférences, désinscription, ou aide.", "type": "string"}]
         },
         "includeOther": false
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000015",
+      "id": "aa000001-0001-4000-8000-000000000019",
       "name": "Login Command?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1040, 520],
+      "position": [1560, 640],
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
           "conditions": [
-            {
-              "id": "c2",
-              "leftValue": "={{ $json.isLoginAttempt }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
+            {"id": "c2", "leftValue": "={{ $('Parse Input').first().json.isLoginAttempt }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}
           ],
           "combinator": "and"
         }
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000016",
+      "id": "aa000001-0001-4000-8000-000000000020",
       "name": "Authenticate User",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1300, 440],
+      "position": [1820, 560],
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT id::text AS user_id, pseudo, role FROM users WHERE pseudo = $1 AND password_hash = crypt($2, password_hash) AND is_active = true LIMIT 1",
         "options": {
           "alwaysOutputData": true,
-          "queryReplacement": "={{ $json.loginPseudo }},={{ $json.loginPassword }}"
+          "queryReplacement": "={{ $('Parse Input').first().json.loginPseudo }},={{ $('Parse Input').first().json.loginPassword }}"
         }
       },
-      "credentials": {
-        "postgres": {
-          "id": "1",
-          "name": "persona-db"
-        }
-      }
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
     },
     {
-      "id": "11111111-0001-4000-8000-000000000017",
+      "id": "aa000001-0001-4000-8000-000000000021",
       "name": "Auth Success?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1560, 440],
+      "position": [2080, 560],
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
           "conditions": [
-            {
-              "id": "c3",
-              "leftValue": "={{ $json.user_id }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "notEmpty",
-                "singleValue": true
-              }
-            }
+            {"id": "c3", "leftValue": "={{ $json.user_id }}", "rightValue": "", "operator": {"type": "string", "operation": "notEmpty", "singleValue": true}}
           ],
           "combinator": "and"
         }
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000018",
+      "id": "aa000001-0001-4000-8000-000000000022",
       "name": "Create Session",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1820, 340],
+      "position": [2340, 460],
       "parameters": {
         "operation": "executeQuery",
         "query": "INSERT INTO sessions (session_id, user_id, pseudo, role) VALUES ($1, $2::uuid, $3, $4) ON CONFLICT (session_id) DO UPDATE SET user_id = EXCLUDED.user_id, pseudo = EXCLUDED.pseudo, role = EXCLUDED.role, expires_at = now() + INTERVAL '24 hours'",
@@ -352,19 +326,14 @@
           "queryReplacement": "={{ $('Parse Input').first().json.sessionId }},={{ $json.user_id }},={{ $json.pseudo }},={{ $json.role }}"
         }
       },
-      "credentials": {
-        "postgres": {
-          "id": "1",
-          "name": "persona-db"
-        }
-      }
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
     },
     {
-      "id": "11111111-0001-4000-8000-000000000019",
+      "id": "aa000001-0001-4000-8000-000000000023",
       "name": "Audit: Login Success",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [2080, 340],
+      "position": [2600, 460],
       "parameters": {
         "operation": "executeQuery",
         "query": "INSERT INTO audit_log (user_id, action, detail) VALUES ($1::uuid, 'login_success', '{}'::jsonb)",
@@ -372,40 +341,28 @@
           "queryReplacement": "={{ $('Authenticate User').first().json.user_id }}"
         }
       },
-      "credentials": {
-        "postgres": {
-          "id": "1",
-          "name": "persona-db"
-        }
-      }
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
     },
     {
-      "id": "11111111-0001-4000-8000-000000000020",
+      "id": "aa000001-0001-4000-8000-000000000024",
       "name": "Welcome",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [2340, 340],
+      "position": [2860, 460],
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [
-            {
-              "id": "a2",
-              "name": "output",
-              "value": "=Bienvenue {{ $('Authenticate User').first().json.pseudo }} ! Vous êtes maintenant connecté(e).\n\nCommandes disponibles :\n• newsletter — recevoir votre newsletter maintenant\n• préférences — modifier vos centres d'intérêt, email ou horaire\n• désinscription — se désinscrire\n• aide — afficher cette aide",
-              "type": "string"
-            }
-          ]
+          "assignments": [{"id": "a3", "name": "output", "value": "=Bienvenue {{ $('Authenticate User').first().json.pseudo }} ! Vous êtes connecté(e).\n\nCommandes : newsletter · préférences · désinscription · aide", "type": "string"}]
         },
         "includeOther": false
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000021",
+      "id": "aa000001-0001-4000-8000-000000000025",
       "name": "Audit: Login Fail",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1820, 580],
+      "position": [2340, 660],
       "parameters": {
         "operation": "executeQuery",
         "query": "INSERT INTO audit_log (user_id, action, detail) VALUES (NULL, 'login_fail', jsonb_build_object('pseudo', $1))",
@@ -413,51 +370,32 @@
           "queryReplacement": "={{ $('Parse Input').first().json.loginPseudo }}"
         }
       },
-      "credentials": {
-        "postgres": {
-          "id": "1",
-          "name": "persona-db"
-        }
-      }
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
     },
     {
-      "id": "11111111-0001-4000-8000-000000000022",
+      "id": "aa000001-0001-4000-8000-000000000026",
       "name": "Wrong Credentials",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [2080, 580],
+      "position": [2600, 660],
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [
-            {
-              "id": "a3",
-              "name": "output",
-              "value": "Identifiants incorrects. Vérifiez votre pseudo et mot de passe.\n\nFormat : login <pseudo> <mot_de_passe>",
-              "type": "string"
-            }
-          ]
+          "assignments": [{"id": "a4", "name": "output", "value": "Identifiants incorrects.\n\nFormat : login <pseudo> <mot_de_passe>", "type": "string"}]
         },
         "includeOther": false
       }
     },
     {
-      "id": "11111111-0001-4000-8000-000000000023",
+      "id": "aa000001-0001-4000-8000-000000000027",
       "name": "Please Login",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1300, 700],
+      "position": [1820, 760],
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [
-            {
-              "id": "a4",
-              "name": "output",
-              "value": "Bonjour ! Je suis Persona, votre agrégateur de newsletters IA personnalisées.\n\nPour commencer :\n• Connexion : login <pseudo> <mot_de_passe>\n• Créer un compte : tapez register\n\nAucune donnée n'est stockée sans votre consentement explicite.",
-              "type": "string"
-            }
-          ]
+          "assignments": [{"id": "a5", "name": "output", "value": "Bonjour ! Je suis Persona, votre agrégateur de newsletters IA.\n\n• Connexion : login <pseudo> <mot_de_passe>\n• Créer un compte : tapez register", "type": "string"}]
         },
         "includeOther": false
       }
@@ -465,19 +403,25 @@
   ],
   "connections": {
     "Chat Trigger": {
-      "main": [
-        [{"node": "Parse Input", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Parse Input", "type": "main", "index": 0}]]
     },
     "Parse Input": {
+      "main": [[{"node": "Check Pending Reg", "type": "main", "index": 0}]]
+    },
+    "Check Pending Reg": {
+      "main": [[{"node": "Pending Reg?", "type": "main", "index": 0}]]
+    },
+    "Pending Reg?": {
       "main": [
+        [{"node": "Set Register Intent", "type": "main", "index": 0}],
         [{"node": "Get Session", "type": "main", "index": 0}]
       ]
     },
+    "Set Register Intent": {
+      "main": [[{"node": "Continue Registration", "type": "main", "index": 0}]]
+    },
     "Get Session": {
-      "main": [
-        [{"node": "Session Valid?", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Session Valid?", "type": "main", "index": 0}]]
     },
     "Session Valid?": {
       "main": [
@@ -486,26 +430,20 @@
       ]
     },
     "Prepare Ollama Prompt": {
-      "main": [
-        [{"node": "Classify Intent", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Classify Intent", "type": "main", "index": 0}]]
     },
     "Classify Intent": {
-      "main": [
-        [{"node": "Parse Intent", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Parse Intent", "type": "main", "index": 0}]]
     },
     "Parse Intent": {
-      "main": [
-        [{"node": "Route Intent", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Route Intent", "type": "main", "index": 0}]]
     },
     "Route Intent": {
       "main": [
-        [{"node": "WF2: Register (stub)", "type": "main", "index": 0}],
-        [{"node": "WF2: Préférences (stub)", "type": "main", "index": 0}],
-        [{"node": "WF3: Newsletter (stub)", "type": "main", "index": 0}],
-        [{"node": "WF4: Désinscription (stub)", "type": "main", "index": 0}],
+        [{"node": "WF2: Register", "type": "main", "index": 0}],
+        [{"node": "WF2: Update Prefs", "type": "main", "index": 0}],
+        [{"node": "WF3: Newsletter", "type": "main", "index": 0}],
+        [{"node": "WF4: Unsubscribe", "type": "main", "index": 0}],
         [{"node": "Help", "type": "main", "index": 0}],
         [{"node": "Unknown Intent", "type": "main", "index": 0}]
       ]
@@ -517,9 +455,7 @@
       ]
     },
     "Authenticate User": {
-      "main": [
-        [{"node": "Auth Success?", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Auth Success?", "type": "main", "index": 0}]]
     },
     "Auth Success?": {
       "main": [
@@ -528,23 +464,15 @@
       ]
     },
     "Create Session": {
-      "main": [
-        [{"node": "Audit: Login Success", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Audit: Login Success", "type": "main", "index": 0}]]
     },
     "Audit: Login Success": {
-      "main": [
-        [{"node": "Welcome", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Welcome", "type": "main", "index": 0}]]
     },
     "Audit: Login Fail": {
-      "main": [
-        [{"node": "Wrong Credentials", "type": "main", "index": 0}]
-      ]
+      "main": [[{"node": "Wrong Credentials", "type": "main", "index": 0}]]
     }
   },
-  "settings": {
-    "executionOrder": "v1"
-  },
+  "settings": {"executionOrder": "v1"},
   "pinData": {}
 }

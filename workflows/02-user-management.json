@@ -1,0 +1,543 @@
+{
+  "name": "02 — User Management",
+  "nodes": [
+    {
+      "id": "bb000001-0001-4000-8000-000000000001",
+      "name": "WF2 Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300],
+      "parameters": {}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000002",
+      "name": "Register or Update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [260, 300],
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": false, "leftValue": "", "typeValidation": "loose"},
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "register",
+              "operator": {"type": "string", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000003",
+      "name": "Get Pending Reg",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [520, 120],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT step, pseudo, email, send_hour FROM pending_registrations WHERE session_id = $1 AND expires_at > now() LIMIT 1",
+        "options": {
+          "alwaysOutputData": true,
+          "queryReplacement": "={{ $json.sessionId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000004",
+      "name": "Has Pending Reg?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [780, 120],
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.step }}",
+              "rightValue": "",
+              "operator": {"type": "string", "operation": "notEmpty", "singleValue": true}
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000005",
+      "name": "Start Registration",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, -60],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO pending_registrations (session_id) VALUES ($1) ON CONFLICT (session_id) DO UPDATE SET step = 'ask_pseudo', expires_at = now() + INTERVAL '1 hour'",
+        "options": {
+          "queryReplacement": "={{ $('WF2 Input').first().json.sessionId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000006",
+      "name": "Ask Pseudo Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1300, -60],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s1", "name": "output", "value": "Bienvenue dans Persona !\n\nPour créer votre compte, j'ai besoin de quelques informations.\n\n(Étape 1/6) Quel pseudo souhaitez-vous ?\n(3 à 30 caractères, lettres/chiffres/underscore)", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000007",
+      "name": "Process Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 120],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pending = $input.first().json;\nconst trigger = $('WF2 Input').first().json;\nconst chatInput = (trigger.chatInput || '').trim();\nconst sessionId = trigger.sessionId;\nconst step = pending.step;\n\nlet response = '';\nlet action = 'invalid';\nlet updatePseudo = null;\nlet updateEmail = null;\nlet updatePasswordPlain = null;\nlet updateInterests = null;\nlet updateHour = null;\nlet newStep = step;\n\nconst STEPS = ['ask_pseudo','ask_email','ask_password','ask_interests','ask_hour','ask_consent'];\nconst stepNum = STEPS.indexOf(step) + 1;\n\nswitch (step) {\n  case 'ask_pseudo':\n    if (/^[a-zA-Z0-9_]{3,30}$/.test(chatInput)) {\n      updatePseudo = chatInput;\n      newStep = 'ask_email';\n      action = 'update';\n      response = `Pseudo \"${chatInput}\" noté ! (${stepNum}/6)\\n\\n(Étape 2/6) Quelle est votre adresse email ?`;\n    } else {\n      response = 'Pseudo invalide. Utilisez 3 à 30 caractères (lettres, chiffres, underscore).\\n\\nQuel pseudo souhaitez-vous ?';\n    }\n    break;\n\n  case 'ask_email':\n    if (/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(chatInput)) {\n      updateEmail = chatInput;\n      newStep = 'ask_password';\n      action = 'update';\n      response = `Email \"${chatInput}\" noté. (${stepNum}/6)\\n\\n(Étape 3/6) Choisissez un mot de passe (8 caractères minimum) :`;\n    } else {\n      response = 'Adresse email invalide. Exemple : prenom@domaine.com';\n    }\n    break;\n\n  case 'ask_password':\n    if (chatInput.length >= 8) {\n      updatePasswordPlain = chatInput;\n      newStep = 'ask_interests';\n      action = 'update';\n      response = `Mot de passe enregistré. (${stepNum}/6)\\n\\n(Étape 4/6) Quels sont vos centres d\\'intérêt ?\\n(Ex : IA, science, crypto, finance — séparez par des virgules)`;\n    } else {\n      response = 'Mot de passe trop court. Minimum 8 caractères.';\n    }\n    break;\n\n  case 'ask_interests':\n    var interests = chatInput\n      .split(',')\n      .map(function(i) { return i.trim().toLowerCase(); })\n      .filter(function(i) { return i.length > 0 && i.length <= 50; })\n      .slice(0, 10);\n    if (interests.length > 0) {\n      updateInterests = JSON.stringify(interests);\n      newStep = 'ask_hour';\n      action = 'update';\n      response = `Intérêts : ${interests.join(', ')}. (${stepNum}/6)\\n\\n(Étape 5/6) À quelle heure recevoir votre newsletter ?\\n(Entrez un nombre entre 0 et 23, ex : 8 pour 8h00)`;\n    } else {\n      response = 'Veuillez entrer au moins un centre d\\'intérêt.';\n    }\n    break;\n\n  case 'ask_hour':\n    var hour = parseInt(chatInput, 10);\n    if (!isNaN(hour) && hour >= 0 && hour <= 23) {\n      updateHour = hour;\n      newStep = 'ask_consent';\n      action = 'update';\n      response = `Newsletter prévue à ${hour}h00. (${stepNum}/6)\\n\\n(Étape 6/6) Consentement RGPD requis :\\n\\nPersona stockera votre adresse email pour vous envoyer des newsletters personnalisées. Vous pouvez vous désinscrire à tout moment via le lien en bas de chaque email.\\n\\nTapez OUI pour accepter et créer votre compte, ou NON pour annuler.`;\n    } else {\n      response = 'Heure invalide. Entrez un nombre entre 0 et 23.';\n    }\n    break;\n\n  case 'ask_consent':\n    var answer = chatInput.toLowerCase().replace(/[^a-z]/g, '');\n    if (['oui','yes','ok','jaccepte','accepte','agree'].includes(answer)) {\n      action = 'complete';\n      response = `Compte créé avec succès !\\n\\nBienvenue ${pending.pseudo} !\\nVotre newsletter arrivera chaque jour à ${pending.send_hour}h00.\\n\\nConnectez-vous maintenant :\\nlogin ${pending.pseudo} <votre_mot_de_passe>`;\n    } else if (['non','no','annuler','cancel','refuse'].includes(answer)) {\n      action = 'cancel';\n      response = 'Inscription annulée. Vos données temporaires ont été supprimées.\\n\\nTapez register pour recommencer.';\n    } else {\n      response = 'Répondez par OUI (accepter et créer le compte) ou NON (annuler).';\n    }\n    break;\n\n  default:\n    response = 'Étape inconnue. Tapez register pour recommencer.';\n    action = 'cancel';\n}\n\nreturn [{\n  json: {\n    sessionId,\n    step,\n    newStep,\n    action,\n    response,\n    updatePseudo: updatePseudo || '',\n    updateEmail: updateEmail || '',\n    updatePasswordPlain: updatePasswordPlain || '',\n    updateInterests: updateInterests || '',\n    updateHour: updateHour !== null ? String(updateHour) : '',\n    pendingPseudo: pending.pseudo,\n    pendingEmail: pending.email,\n    pendingSendHour: pending.send_hour\n  }\n}];"
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000008",
+      "name": "Step Action?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1300, 120],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "rules": [
+            {
+              "outputKey": "0",
+              "conditions": {
+                "options": {"caseSensitive": false, "typeValidation": "loose"},
+                "conditions": [{"id": "r1", "leftValue": "={{ $json.action }}", "rightValue": "invalid", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "1",
+              "conditions": {
+                "options": {"caseSensitive": false, "typeValidation": "loose"},
+                "conditions": [{"id": "r2", "leftValue": "={{ $json.action }}", "rightValue": "update", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "2",
+              "conditions": {
+                "options": {"caseSensitive": false, "typeValidation": "loose"},
+                "conditions": [{"id": "r3", "leftValue": "={{ $json.action }}", "rightValue": "complete", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "3",
+              "conditions": {
+                "options": {"caseSensitive": false, "typeValidation": "loose"},
+                "conditions": [{"id": "r4", "leftValue": "={{ $json.action }}", "rightValue": "cancel", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "fallbackOutput": "extra"
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000009",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1560, -60],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s2", "name": "output", "value": "={{ $json.response }}", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000010",
+      "name": "Update Pending Reg",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 120],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE pending_registrations SET pseudo = COALESCE(NULLIF($1,''), pseudo), email = COALESCE(NULLIF($2,''), email), password_hash = CASE WHEN NULLIF($3,'') IS NOT NULL THEN crypt(NULLIF($3,''), gen_salt('bf')) ELSE password_hash END, interests = CASE WHEN NULLIF($4,'') IS NOT NULL THEN NULLIF($4,'')::jsonb ELSE interests END, send_hour = COALESCE(NULLIF($5,'')::integer, send_hour), step = $6 WHERE session_id = $7",
+        "options": {
+          "queryReplacement": "={{ $json.updatePseudo }},={{ $json.updateEmail }},={{ $json.updatePasswordPlain }},={{ $json.updateInterests }},={{ $json.updateHour }},={{ $json.newStep }},={{ $json.sessionId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000011",
+      "name": "Next Step Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1820, 120],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s3", "name": "output", "value": "={{ $json.response }}", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000012",
+      "name": "Insert User",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO users (pseudo, email, password_hash, interests, send_hour, consent_given, consent_at) SELECT pseudo, email, password_hash, interests, send_hour, true, now() FROM pending_registrations WHERE session_id = $1 ON CONFLICT (pseudo) DO NOTHING RETURNING id::text, pseudo, email",
+        "options": {
+          "alwaysOutputData": true,
+          "queryReplacement": "={{ $('WF2 Input').first().json.sessionId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000013",
+      "name": "User Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1820, 300],
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {"type": "string", "operation": "notEmpty", "singleValue": true}
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000014",
+      "name": "Delete Pending Reg",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2080, 240],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM pending_registrations WHERE session_id = $1",
+        "options": {
+          "queryReplacement": "={{ $('WF2 Input').first().json.sessionId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000015",
+      "name": "Account Created",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2340, 240],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s4", "name": "output", "value": "={{ $('Process Step').first().json.response }}", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000016",
+      "name": "Account Conflict",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2080, 380],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s5", "name": "output", "value": "Ce pseudo ou cet email est déjà utilisé.\n\nTapez register pour recommencer avec un pseudo différent.", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000017",
+      "name": "Delete Pending Reg (cancel)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 460],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM pending_registrations WHERE session_id = $1",
+        "options": {
+          "queryReplacement": "={{ $('WF2 Input').first().json.sessionId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000018",
+      "name": "Registration Cancelled",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1820, 460],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s6", "name": "output", "value": "Inscription annulée. Vos données temporaires ont été supprimées.\n\nTapez register pour recommencer.", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000019",
+      "name": "Parse Pref Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 500],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const trigger = $input.first().json;\nconst chatInput = (trigger.chatInput || '').trim();\nconst userId = trigger.user_id;\nconst pseudo = trigger.pseudo;\n\nlet updateType = 'unknown';\nlet updateValue = null;\nlet response = '';\n\nif (/email/i.test(chatInput)) {\n  var emailMatch = chatInput.match(/[^\\s@]+@[^\\s@]+\\.[^\\s@]+/);\n  if (emailMatch) {\n    updateType = 'email';\n    updateValue = emailMatch[0];\n  } else {\n    updateType = 'unknown';\n    response = 'Pour mettre à jour votre email, précisez la nouvelle adresse :\\nEx : email nouveau@domaine.com';\n  }\n} else if (/int[eé]r[eê]t|topic|sujet|news/i.test(chatInput)) {\n  var after = (chatInput.split(/[:=]/)[1] || chatInput).trim();\n  var interests = after.split(',').map(function(i) { return i.trim().toLowerCase(); }).filter(function(i) { return i.length > 0 && i.length <= 50; }).slice(0, 10);\n  if (interests.length > 0) {\n    updateType = 'interests';\n    updateValue = JSON.stringify(interests);\n  } else {\n    updateType = 'unknown';\n    response = 'Pour mettre à jour vos intérêts, listez-les séparés par des virgules :\\nEx : intérêts: IA, science, crypto';\n  }\n} else if (/heure|horaire|hour|schedule/i.test(chatInput)) {\n  var hourMatch = chatInput.match(/\\b([01]?\\d|2[0-3])\\b/);\n  if (hourMatch) {\n    var h = parseInt(hourMatch[1], 10);\n    if (h >= 0 && h <= 23) {\n      updateType = 'hour';\n      updateValue = h;\n    }\n  }\n  if (updateType === 'unknown') {\n    response = 'Pour changer l\\'heure d\\'envoi, précisez l\\'heure (0-23) :\\nEx : horaire 9';\n  }\n}\n\nreturn [{\n  json: { userId, pseudo, updateType, updateValue, chatInput, response }\n}];"
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000020",
+      "name": "What to Update?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [780, 500],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "rules": [
+            {
+              "outputKey": "0",
+              "conditions": {
+                "options": {"caseSensitive": false, "typeValidation": "loose"},
+                "conditions": [{"id": "r5", "leftValue": "={{ $json.updateType }}", "rightValue": "email", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "1",
+              "conditions": {
+                "options": {"caseSensitive": false, "typeValidation": "loose"},
+                "conditions": [{"id": "r6", "leftValue": "={{ $json.updateType }}", "rightValue": "interests", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "2",
+              "conditions": {
+                "options": {"caseSensitive": false, "typeValidation": "loose"},
+                "conditions": [{"id": "r7", "leftValue": "={{ $json.updateType }}", "rightValue": "hour", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "fallbackOutput": "extra"
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000021",
+      "name": "Update Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, 400],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users SET email = $1, updated_at = now() WHERE id = $2::uuid",
+        "options": {
+          "queryReplacement": "={{ $json.updateValue }},={{ $json.userId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000022",
+      "name": "Email Updated",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1300, 400],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s7", "name": "output", "value": "={{ 'Email mis à jour : ' + $json.updateValue }}", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000023",
+      "name": "Update Interests",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, 520],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users SET interests = $1::jsonb, updated_at = now() WHERE id = $2::uuid",
+        "options": {
+          "queryReplacement": "={{ $json.updateValue }},={{ $json.userId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000024",
+      "name": "Interests Updated",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1300, 520],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s8", "name": "output", "value": "={{ 'Centres d\\'intérêt mis à jour : ' + JSON.parse($json.updateValue).join(', ') }}", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000025",
+      "name": "Update Hour",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, 640],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users SET send_hour = $1::integer, updated_at = now() WHERE id = $2::uuid",
+        "options": {
+          "queryReplacement": "={{ $json.updateValue }},={{ $json.userId }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000026",
+      "name": "Hour Updated",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1300, 640],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "s9", "name": "output", "value": "={{ 'Heure d\\'envoi mise à jour : ' + $json.updateValue + 'h00' }}", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "bb000001-0001-4000-8000-000000000027",
+      "name": "Unknown Pref",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1040, 760],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s10",
+              "name": "output",
+              "value": "=Que souhaitez-vous modifier ?\n\n• email <nouvelle@adresse.com>\n• intérêts: IA, science, crypto\n• horaire <0-23>\n\n{{ $json.response ? $json.response : '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOther": false
+      }
+    }
+  ],
+  "connections": {
+    "WF2 Input": {
+      "main": [[{"node": "Register or Update?", "type": "main", "index": 0}]]
+    },
+    "Register or Update?": {
+      "main": [
+        [{"node": "Get Pending Reg", "type": "main", "index": 0}],
+        [{"node": "Parse Pref Update", "type": "main", "index": 0}]
+      ]
+    },
+    "Get Pending Reg": {
+      "main": [[{"node": "Has Pending Reg?", "type": "main", "index": 0}]]
+    },
+    "Has Pending Reg?": {
+      "main": [
+        [{"node": "Process Step", "type": "main", "index": 0}],
+        [{"node": "Start Registration", "type": "main", "index": 0}]
+      ]
+    },
+    "Start Registration": {
+      "main": [[{"node": "Ask Pseudo Response", "type": "main", "index": 0}]]
+    },
+    "Process Step": {
+      "main": [[{"node": "Step Action?", "type": "main", "index": 0}]]
+    },
+    "Step Action?": {
+      "main": [
+        [{"node": "Error Response", "type": "main", "index": 0}],
+        [{"node": "Update Pending Reg", "type": "main", "index": 0}],
+        [{"node": "Insert User", "type": "main", "index": 0}],
+        [{"node": "Delete Pending Reg (cancel)", "type": "main", "index": 0}],
+        [{"node": "Error Response", "type": "main", "index": 0}]
+      ]
+    },
+    "Update Pending Reg": {
+      "main": [[{"node": "Next Step Response", "type": "main", "index": 0}]]
+    },
+    "Insert User": {
+      "main": [[{"node": "User Created?", "type": "main", "index": 0}]]
+    },
+    "User Created?": {
+      "main": [
+        [{"node": "Delete Pending Reg", "type": "main", "index": 0}],
+        [{"node": "Account Conflict", "type": "main", "index": 0}]
+      ]
+    },
+    "Delete Pending Reg": {
+      "main": [[{"node": "Account Created", "type": "main", "index": 0}]]
+    },
+    "Delete Pending Reg (cancel)": {
+      "main": [[{"node": "Registration Cancelled", "type": "main", "index": 0}]]
+    },
+    "Parse Pref Update": {
+      "main": [[{"node": "What to Update?", "type": "main", "index": 0}]]
+    },
+    "What to Update?": {
+      "main": [
+        [{"node": "Update Email", "type": "main", "index": 0}],
+        [{"node": "Update Interests", "type": "main", "index": 0}],
+        [{"node": "Update Hour", "type": "main", "index": 0}],
+        [{"node": "Unknown Pref", "type": "main", "index": 0}]
+      ]
+    },
+    "Update Email": {
+      "main": [[{"node": "Email Updated", "type": "main", "index": 0}]]
+    },
+    "Update Interests": {
+      "main": [[{"node": "Interests Updated", "type": "main", "index": 0}]]
+    },
+    "Update Hour": {
+      "main": [[{"node": "Hour Updated", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "pinData": {}
+}
