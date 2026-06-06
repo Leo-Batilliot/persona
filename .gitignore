@@ -1,0 +1,19 @@
+# =====================================================================
+#  Persona .gitignore
+# =====================================================================
+
+*.md
+
+# ne JAMAIS committer le .env réel (contient les secrets)
+.env
+
+# Dossier partagé Docker (données générées, potentiellement sensibles)
+shared/
+
+.vscode/
+
+# Dépendances Node si un jour on ajoute des scripts locaux
+node_modules/
+
+# Logs locaux
+*.log

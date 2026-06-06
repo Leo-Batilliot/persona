@@ -1,0 +1,89 @@
+services:
+  # ---------------------------------------------------------------
+  # PostgreSQL : sert DEUX bases
+  #   - n8n        : base interne de n8n (workflows, credentials chiffrés)
+  #   - persona    : base applicative (users, news_cache, audit_log)
+  # ---------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: persona-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: n8n
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Les scripts .sql ici sont joués UNE fois, à la création du volume.
+      - ./init-db:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"   # exposé pour que tu puisses inspecter avec un client SQL
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d n8n"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------
+  # Ollama : modèles LLM 100% locaux (résumés + classification d'intention)
+  # ---------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: persona-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    # Décommente le bloc deploy si tu as un GPU NVIDIA + nvidia-container-toolkit
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ---------------------------------------------------------------
+  # n8n : le moteur de workflows
+  # ---------------------------------------------------------------
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: persona-n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # --- n8n utilise Postgres comme backend (sinon SQLite par défaut) ---
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      # --- Clé de chiffrement des credentials (NE PAS LA PERDRE) ---
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      # --- Accès / réseau ---
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      GENERIC_TIMEZONE: Europe/Paris
+      # --- Confort / sécurité ---
+      N8N_SECURE_COOKIE: "false"           # ok en local http
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false" # permet d'utiliser $env dans les nodes Code
+      # --- Permet d'appeler Ollama depuis les nodes ---
+      OLLAMA_HOST: http://ollama:11434
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # dossier partagé pour importer/exporter des fichiers facilement
+      - ./shared:/data/shared
+
+volumes:
+  postgres_data:
+  ollama_data:
+  n8n_data:
