@@ -140,7 +140,7 @@
       "position": [1560, 240],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const sessionData = $input.first().json;\nconst chatInput = $('Parse Input').first().json.chatInput;\nconst safeInput = chatInput.replace(/[\"\\\\]/g, (c) => ({ '\"': \"'\", '\\\\': '' })[c]).substring(0, 200);\nconst prompt = `Classify this user message into exactly one category.\\n\\nCategories:\\n- register : user wants to create an account or sign up\\n- update_prefs : user wants to change email, interests, newsletter time\\n- newsletter : user wants to receive their newsletter now or asks about it\\n- unsubscribe : user wants to unsubscribe or delete account\\n- help : user asks what they can do or asks for help\\n- unknown : none of the above\\n\\nMessage: \"${safeInput}\"\\n\\nReply with ONLY the category name, nothing else.`;\nreturn [{\n  json: {\n    user_id: sessionData.user_id,\n    pseudo: sessionData.pseudo,\n    role: sessionData.role,\n    chatInput,\n    sessionId: $('Parse Input').first().json.sessionId,\n    ollamaPrompt: prompt\n  }\n}];"
+        "jsCode": "const sessionData = $input.first().json;\nconst chatInput = $('Parse Input').first().json.chatInput;\nconst safeInput = chatInput.replace(/[\"\\\\]/g, (c) => ({ '\"': \"'\", '\\\\': '' })[c]).substring(0, 200);\nconst prompt = `Classify this user message into exactly one category.\\n\\nCategories:\\n- register : user wants to create an account or sign up\\n- update_prefs : user wants to change email, interests, newsletter time\\n- newsletter : user wants to receive their newsletter now or asks about it\\n- unsubscribe : user wants to unsubscribe or delete account\\n- status : user wants to see their profile, current preferences, or account information\\n- help : user asks what they can do or asks for help\\n- unknown : none of the above\\n\\nMessage: \"${safeInput}\"\\n\\nReply with ONLY the category name, nothing else.`;\nreturn [{\n  json: {\n    user_id: sessionData.user_id,\n    pseudo: sessionData.pseudo,\n    role: sessionData.role,\n    chatInput,\n    sessionId: $('Parse Input').first().json.sessionId,\n    ollamaPrompt: prompt\n  }\n}];"
       }
     },
     {
@@ -166,7 +166,7 @@
       "position": [2080, 240],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const ollamaResp = $input.first().json;\nconst prev = $('Prepare Ollama Prompt').first().json;\nconst rawResponse = (ollamaResp.response || '').trim().toLowerCase();\nconst KNOWN = ['register','update_prefs','newsletter','unsubscribe','help'];\nconst intent = KNOWN.find(k => rawResponse.startsWith(k)) || 'unknown';\nreturn [{\n  json: {\n    user_id: prev.user_id,\n    pseudo: prev.pseudo,\n    role: prev.role,\n    chatInput: prev.chatInput,\n    sessionId: prev.sessionId,\n    intent,\n    rawOllamaResponse: rawResponse\n  }\n}];"
+        "jsCode": "const ollamaResp = $input.first().json;\nconst prev = $('Prepare Ollama Prompt').first().json;\nconst rawResponse = (ollamaResp.response || '').trim().toLowerCase();\nconst KNOWN = ['register','update_prefs','newsletter','unsubscribe','status','help'];\nconst intent = KNOWN.find(k => rawResponse.startsWith(k)) || 'unknown';\nreturn [{\n  json: {\n    user_id: prev.user_id,\n    pseudo: prev.pseudo,\n    role: prev.role,\n    chatInput: prev.chatInput,\n    sessionId: prev.sessionId,\n    intent,\n    rawOllamaResponse: rawResponse\n  }\n}];"
       }
     },
     {
@@ -183,7 +183,8 @@
             {"outputKey": "1", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r2", "leftValue": "={{ $json.intent }}", "rightValue": "update_prefs", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
             {"outputKey": "2", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r3", "leftValue": "={{ $json.intent }}", "rightValue": "newsletter", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
             {"outputKey": "3", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r4", "leftValue": "={{ $json.intent }}", "rightValue": "unsubscribe", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
-            {"outputKey": "4", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r5", "leftValue": "={{ $json.intent }}", "rightValue": "help", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}}
+            {"outputKey": "4", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r5", "leftValue": "={{ $json.intent }}", "rightValue": "help", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
+            {"outputKey": "5", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r6", "leftValue": "={{ $json.intent }}", "rightValue": "status", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}}
           ]
         },
         "fallbackOutput": "extra"
@@ -246,7 +247,7 @@
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [{"id": "a1", "name": "output", "value": "=Bonjour {{ $json.pseudo }} ! Voici ce que vous pouvez faire :\n\n• newsletter — recevoir votre newsletter maintenant\n• préférences — modifier vos centres d'intérêt, email ou horaire\n• register / inscription — créer un compte (si pas encore fait)\n• désinscription — se désinscrire de Persona", "type": "string"}]
+          "assignments": [{"id": "a1", "name": "output", "value": "=Bonjour {{ $json.pseudo }} ! Voici ce que vous pouvez faire :\n\n• newsletter — recevoir votre newsletter maintenant\n• mes préférences — voir votre profil et vos réglages\n• modifier préférences — changer email, centres d'intérêt ou horaire\n• register / inscription — créer un compte (si pas encore fait)\n• désinscription — se désinscrire de Persona", "type": "string"}]
         },
         "includeOther": false
       }
@@ -399,6 +400,33 @@
         },
         "includeOther": false
       }
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000028",
+      "name": "Get User Profile",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2600, 840],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pseudo, email, interests, send_hour, created_at::date::text AS since FROM users WHERE id = $1::uuid AND is_active = true LIMIT 1",
+        "options": {
+          "alwaysOutputData": true,
+          "queryReplacement": "={{ $json.user_id }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000029",
+      "name": "Profile Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2860, 840],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const user = $input.first().json;\nif (!user.pseudo) {\n  return [{ json: { output: 'Impossible de récupérer votre profil. Essayez de vous reconnecter.' } }];\n}\nconst interests = Array.isArray(user.interests) && user.interests.length > 0\n  ? user.interests.join(', ')\n  : 'tous (aucun filtre)';\nconst hour = user.send_hour !== null && user.send_hour !== undefined\n  ? user.send_hour + 'h00'\n  : 'non défini';\nreturn [{\n  json: {\n    output: 'Votre profil Persona :\\n\\n• Pseudo : ' + user.pseudo + '\\n• Email : ' + (user.email || 'non défini') + '\\n• Intérêts : ' + interests + '\\n• Newsletter à : ' + hour + '\\n• Membre depuis : ' + (user.since || '?') + '\\n\\nPour modifier, tapez : modifier préférences'\n  }\n}];"
+      }
     }
   ],
   "connections": {
@@ -445,8 +473,12 @@
         [{"node": "WF3: Newsletter", "type": "main", "index": 0}],
         [{"node": "WF4: Unsubscribe", "type": "main", "index": 0}],
         [{"node": "Help", "type": "main", "index": 0}],
+        [{"node": "Get User Profile", "type": "main", "index": 0}],
         [{"node": "Unknown Intent", "type": "main", "index": 0}]
       ]
+    },
+    "Get User Profile": {
+      "main": [[{"node": "Profile Response", "type": "main", "index": 0}]]
     },
     "Login Command?": {
       "main": [
