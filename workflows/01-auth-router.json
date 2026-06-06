@@ -1,0 +1,358 @@
+{
+  "name": "01 — Auth & Router",
+  "nodes": [
+    {
+      "id": "11111111-0001-4000-8000-000000000001",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300],
+      "webhookId": "22222222-0001-4000-8000-000000000001",
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000002",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first();\n\n// Sanitize: strip control chars that could pollute prompts or SQL\nconst chatInput = (item.json.chatInput || '')\n  .replace(/[\\x00-\\x08\\x0B-\\x0C\\x0E-\\x1F]/g, '')\n  .trim()\n  .substring(0, 500); // hard cap: anti-abuse\n\nconst sessionId = (item.json.sessionId || '').trim();\n\n// Detect login command: \"login <pseudo> <password>\"\n// or French variants: \"connexion <pseudo> <password>\"\nconst loginMatch = chatInput.match(\n  /^(?:login|connexion)\\s+(\\S+)\\s+(.+)$/i\n);\n\n// Early detection of register intent (for unauthenticated users)\nconst isRegisterIntent = /^(?:register|inscription|cr[eé]er?\\s+(?:un\\s+)?compte)/i.test(chatInput);\n\nreturn [{\n  json: {\n    chatInput,\n    sessionId,\n    isLoginAttempt: loginMatch !== null,\n    loginPseudo: loginMatch ? loginMatch[1] : null,\n    loginPassword: loginMatch ? loginMatch[2].trim() : null,\n    isRegisterIntent\n  }\n}];"
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000003",
+      "name": "Get Session",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [520, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT user_id::text, pseudo, role FROM sessions WHERE session_id = $1 AND expires_at > now() LIMIT 1",
+        "options": {
+          "alwaysOutputData": true,
+          "queryReplacement": "={{ $json.sessionId }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "persona-db"
+        }
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000004",
+      "name": "Session Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [780, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.user_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000005",
+      "name": "Authenticated (Push 2)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1040, 100],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "output",
+              "value": "=Bonjour {{ $json.pseudo }} ! Vous êtes connecté(e).\n\nRoutage d'intention par Ollama — implémenté au prochain push.\n\nCommandes disponibles :\n• newsletter — recevoir votre newsletter maintenant\n• préférences — modifier vos centres d'intérêt, email ou horaire\n• désinscription — se désinscrire\n• aide — afficher cette aide",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000006",
+      "name": "Login Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1040, 500],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.isLoginAttempt }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000007",
+      "name": "Authenticate User",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1300, 420],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id::text AS user_id, pseudo, role FROM users WHERE pseudo = $1 AND password_hash = crypt($2, password_hash) AND is_active = true LIMIT 1",
+        "options": {
+          "alwaysOutputData": true,
+          "queryReplacement": "={{ $json.loginPseudo }},={{ $json.loginPassword }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "persona-db"
+        }
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000008",
+      "name": "Auth Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1560, 420],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.user_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000009",
+      "name": "Create Session",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1820, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sessions (session_id, user_id, pseudo, role) VALUES ($1, $2::uuid, $3, $4) ON CONFLICT (session_id) DO UPDATE SET user_id = EXCLUDED.user_id, pseudo = EXCLUDED.pseudo, role = EXCLUDED.role, expires_at = now() + INTERVAL '24 hours'",
+        "options": {
+          "queryReplacement": "={{ $('Parse Input').first().json.sessionId }},={{ $json.user_id }},={{ $json.pseudo }},={{ $json.role }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "persona-db"
+        }
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000010",
+      "name": "Audit: Login Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2080, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_log (user_id, action, detail) VALUES ($1::uuid, 'login_success', '{}'::jsonb)",
+        "options": {
+          "queryReplacement": "={{ $('Authenticate User').first().json.user_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "persona-db"
+        }
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000011",
+      "name": "Welcome",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2340, 300],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a2",
+              "name": "output",
+              "value": "=Bienvenue {{ $('Authenticate User').first().json.pseudo }} ! Vous êtes maintenant connecté(e).\n\nCommandes disponibles :\n• newsletter — recevoir votre newsletter maintenant\n• préférences — modifier vos centres d'intérêt, email ou horaire\n• désinscription — se désinscrire\n• aide — afficher cette aide",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000012",
+      "name": "Audit: Login Fail",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1820, 560],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_log (user_id, action, detail) VALUES (NULL, 'login_fail', jsonb_build_object('pseudo', $1))",
+        "options": {
+          "queryReplacement": "={{ $('Parse Input').first().json.loginPseudo }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "persona-db"
+        }
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000013",
+      "name": "Wrong Credentials",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2080, 560],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3",
+              "name": "output",
+              "value": "Identifiants incorrects. Vérifiez votre pseudo et mot de passe.\n\nFormat : login <pseudo> <mot_de_passe>",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "11111111-0001-4000-8000-000000000014",
+      "name": "Please Login",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1300, 680],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a4",
+              "name": "output",
+              "value": "Bonjour ! Je suis Persona, votre agrégateur de newsletters IA personnalisées.\n\nPour commencer :\n• Connexion : login <pseudo> <mot_de_passe>\n• Créer un compte : tapez register\n\nAucune donnée n'est stockée sans votre consentement explicite.",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOther": false
+      }
+    }
+  ],
+  "connections": {
+    "Chat Trigger": {
+      "main": [
+        [{"node": "Parse Input", "type": "main", "index": 0}]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [{"node": "Get Session", "type": "main", "index": 0}]
+      ]
+    },
+    "Get Session": {
+      "main": [
+        [{"node": "Session Valid?", "type": "main", "index": 0}]
+      ]
+    },
+    "Session Valid?": {
+      "main": [
+        [{"node": "Authenticated (Push 2)", "type": "main", "index": 0}],
+        [{"node": "Login Command?", "type": "main", "index": 0}]
+      ]
+    },
+    "Login Command?": {
+      "main": [
+        [{"node": "Authenticate User", "type": "main", "index": 0}],
+        [{"node": "Please Login", "type": "main", "index": 0}]
+      ]
+    },
+    "Authenticate User": {
+      "main": [
+        [{"node": "Auth Success?", "type": "main", "index": 0}]
+      ]
+    },
+    "Auth Success?": {
+      "main": [
+        [{"node": "Create Session", "type": "main", "index": 0}],
+        [{"node": "Audit: Login Fail", "type": "main", "index": 0}]
+      ]
+    },
+    "Create Session": {
+      "main": [
+        [{"node": "Audit: Login Success", "type": "main", "index": 0}]
+      ]
+    },
+    "Audit: Login Success": {
+      "main": [
+        [{"node": "Welcome", "type": "main", "index": 0}]
+      ]
+    },
+    "Audit: Login Fail": {
+      "main": [
+        [{"node": "Wrong Credentials", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
