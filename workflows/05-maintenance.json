@@ -1,0 +1,61 @@
+{
+  "name": "05 — Maintenance",
+  "nodes": [
+    {
+      "id": "cc000005-0005-4000-8000-000000000001",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "days", "daysInterval": 1, "triggerAtHour": 3, "triggerAtMinute": 0}]
+        }
+      }
+    },
+    {
+      "id": "cc000005-0005-4000-8000-000000000002",
+      "name": "Cleanup Expired Registrations",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [260, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH deleted AS (DELETE FROM pending_registrations WHERE expires_at < now() RETURNING session_id) SELECT count(*)::integer AS deleted_count FROM deleted",
+        "options": {"alwaysOutputData": true}
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "cc000005-0005-4000-8000-000000000003",
+      "name": "Log Cleanup",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [520, 300],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "l1",
+              "name": "log",
+              "value": "={{ $json.deleted_count }} inscription(s) expirée(s) supprimée(s) — {{ new Date().toISOString() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOther": false
+      }
+    }
+  ],
+  "connections": {
+    "Daily Schedule": {
+      "main": [[{"node": "Cleanup Expired Registrations", "type": "main", "index": 0}]]
+    },
+    "Cleanup Expired Registrations": {
+      "main": [[{"node": "Log Cleanup", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "pinData": {}
+}
