@@ -1,0 +1,277 @@
+{
+  "name": "03 — News Pipeline",
+  "nodes": [
+    {
+      "id": "cc000001-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "hours", "hoursInterval": 1}]
+        }
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000002",
+      "name": "Get Active Users",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [260, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id::text, pseudo, email, interests, send_hour, unsubscribe_token::text FROM users WHERE is_active = true AND consent_given = true AND send_hour = EXTRACT(hour FROM now() AT TIME ZONE 'Europe/Paris')::integer",
+        "options": {"alwaysOutputData": true}
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000003",
+      "name": "Has Users?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [520, 300],
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {"type": "string", "operation": "notEmpty", "singleValue": true}
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000004",
+      "name": "No Users Log",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [780, 480],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "l1", "name": "log", "value": "=Aucun utilisateur actif à notifier à {{ new Date().getHours() }}h00.", "type": "string"}]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000005",
+      "name": "Aggregate Users",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 160],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const users = $input.all().map(item => item.json);\nreturn [{ json: { users, count: users.length, fetchedAt: new Date().toISOString() } }];"
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000006",
+      "name": "Fetch HN RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [1040, 80],
+      "parameters": {
+        "url": "https://hnrss.org/frontpage?count=30"
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000007",
+      "name": "Tag HN Source",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1300, 80],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "t1", "name": "_source", "value": "Hacker News", "type": "string"}]
+        },
+        "includeOther": true
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000008",
+      "name": "Fetch TechCrunch RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [1040, 260],
+      "parameters": {
+        "url": "https://techcrunch.com/feed/"
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000009",
+      "name": "Tag TC Source",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1300, 260],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [{"id": "t2", "name": "_source", "value": "TechCrunch", "type": "string"}]
+        },
+        "includeOther": true
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000010",
+      "name": "Merge RSS",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1560, 160],
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000011",
+      "name": "Normalize & Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1820, 160],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const raw = item.json;\n  const url = (raw.link || raw.guid || '').trim();\n  const title = (raw.title || 'Sans titre').trim();\n  const rawContent = (raw['content:encoded'] || raw.content || raw.contentSnippet || raw.description || '')\n    .replace(/<[^>]+>/g, '').trim().substring(0, 800);\n  const publishedAt = raw.isoDate || raw.pubDate || new Date().toISOString();\n  const source = raw._source || 'Unknown';\n\n  if (!url.startsWith('http') || !title) continue;\n\n  // Summarize via Ollama (local, no external dependency)\n  let summary = '';\n  try {\n    const prompt = 'Résume cette actualité tech en 2 phrases courtes en français. Sois factuel et neutre.\\n\\nTitre: ' + title + '\\n\\nContenu: ' + rawContent.substring(0, 400) + '\\n\\nRésumé:';\n    const resp = await $httpRequest({\n      method: 'POST',\n      url: 'http://ollama:11434/api/generate',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ model: 'llama3.2:3b', prompt, stream: false })\n    });\n    summary = ((resp.response || '')).trim().substring(0, 500);\n  } catch(e) {\n    summary = rawContent.substring(0, 200);\n  }\n\n  results.push({\n    json: {\n      url,\n      title,\n      source,\n      raw_content: rawContent.substring(0, 2000),\n      summary: summary || rawContent.substring(0, 200),\n      published_at: publishedAt,\n      topics: '[]'\n    }\n  });\n}\n\nreturn results;"
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000012",
+      "name": "Upsert Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2080, 40],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO news_cache (url, source, title, raw_content, summary, topics, published_at) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::timestamptz) ON CONFLICT (url) DO UPDATE SET summary = EXCLUDED.summary, fetched_at = now()",
+        "options": {
+          "queryReplacement": "={{ $json.url }},={{ $json.source }},={{ $json.title }},={{ $json.raw_content }},={{ $json.summary }},={{ $json.topics }},={{ $json.published_at }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000013",
+      "name": "Build Per-User Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 280],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const stories = $input.all().map(item => item.json);\nconst users = $('Aggregate Users').first().json.users;\n\nif (!stories.length) {\n  return [{ json: { log: 'Aucune story à envoyer.' } }];\n}\n\nconst emails = [];\nconst today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });\n\nfor (const user of users) {\n  if (!user.is_active || !user.consent_given || !user.email) continue;\n\n  const interests = (user.interests || []).map(i => String(i).toLowerCase().trim());\n\n  // Filter by interests (keyword match in title + summary)\n  let relevant = stories;\n  if (interests.length > 0) {\n    relevant = stories.filter(story => {\n      const haystack = ((story.title || '') + ' ' + (story.summary || '')).toLowerCase();\n      return interests.some(interest => haystack.includes(interest));\n    });\n    if (relevant.length === 0) relevant = stories.slice(0, 5); // fallback: top 5\n  }\n\n  relevant = relevant.slice(0, 10);\n\n  const unsubUrl = 'http://localhost:5678/webhook/unsubscribe?token=' + user.unsubscribe_token;\n\n  const storiesList = relevant.map((s, i) =>\n    (i + 1) + '. ' + s.title + '\\n   Source : ' + s.source + ' | ' + new Date(s.published_at).toLocaleDateString('fr-FR') + '\\n   Lien : ' + s.url + '\\n   ' + (s.summary || '(résumé indisponible)') + '\\n'\n  ).join('\\n');\n\n  emails.push({\n    json: {\n      to: user.email,\n      userId: user.id,\n      pseudo: user.pseudo,\n      subject: 'Persona Newsletter — ' + today,\n      body: 'Bonjour ' + user.pseudo + ',\\n\\nVoici vos actualités tech du ' + today + ' (' + relevant.length + ' articles sélectionnés selon vos intérêts : ' + (interests.join(', ') || 'tous') + ') :\\n\\n' + storiesList + '\\n---\\nSe désinscrire : ' + unsubUrl + '\\n\\nPersona — Agrégateur IA · 100% local',\n      storyCount: relevant.length\n    }\n  });\n}\n\nreturn emails.length > 0 ? emails : [{ json: { log: 'Aucun email à envoyer (0 users éligibles).' } }];"
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000014",
+      "name": "Split Emails",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2340, 280],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000015",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2600, 200],
+      "parameters": {
+        "fromEmail": "persona.newsletter@gmail.com",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "text": "={{ $json.body }}",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {"id": "2", "name": "persona-smtp"}
+      }
+    },
+    {
+      "id": "cc000001-0001-4000-8000-000000000016",
+      "name": "Log Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2860, 200],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_log (user_id, action, detail) VALUES ($1::uuid, 'newsletter_sent', jsonb_build_object('stories', $2::integer, 'email', $3))",
+        "options": {
+          "queryReplacement": "={{ $json.userId }},={{ $json.storyCount }},={{ $json.to }}"
+        }
+      },
+      "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{"node": "Get Active Users", "type": "main", "index": 0}]]
+    },
+    "Get Active Users": {
+      "main": [[{"node": "Has Users?", "type": "main", "index": 0}]]
+    },
+    "Has Users?": {
+      "main": [
+        [{"node": "Aggregate Users", "type": "main", "index": 0}],
+        [{"node": "No Users Log", "type": "main", "index": 0}]
+      ]
+    },
+    "Aggregate Users": {
+      "main": [
+        [
+          {"node": "Fetch HN RSS", "type": "main", "index": 0},
+          {"node": "Fetch TechCrunch RSS", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "Fetch HN RSS": {
+      "main": [[{"node": "Tag HN Source", "type": "main", "index": 0}]]
+    },
+    "Tag HN Source": {
+      "main": [[{"node": "Merge RSS", "type": "main", "index": 0}]]
+    },
+    "Fetch TechCrunch RSS": {
+      "main": [[{"node": "Tag TC Source", "type": "main", "index": 0}]]
+    },
+    "Tag TC Source": {
+      "main": [[{"node": "Merge RSS", "type": "main", "index": 1}]]
+    },
+    "Merge RSS": {
+      "main": [[{"node": "Normalize & Summarize", "type": "main", "index": 0}]]
+    },
+    "Normalize & Summarize": {
+      "main": [
+        [
+          {"node": "Upsert Cache", "type": "main", "index": 0},
+          {"node": "Build Per-User Emails", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "Build Per-User Emails": {
+      "main": [[{"node": "Split Emails", "type": "main", "index": 0}]]
+    },
+    "Split Emails": {
+      "main": [
+        [{"node": "Send Email", "type": "main", "index": 0}],
+        []
+      ]
+    },
+    "Send Email": {
+      "main": [[{"node": "Log Sent", "type": "main", "index": 0}]]
+    },
+    "Log Sent": {
+      "main": [[{"node": "Split Emails", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "pinData": {}
+}
