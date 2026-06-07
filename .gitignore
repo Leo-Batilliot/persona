@@ -5,8 +5,8 @@
 *.md
 !README.md 
 
-# ne JAMAIS committer le .env réel (contient les secrets)
-.env
+.*
+!.gitignore
 
 # Dossier partagé Docker (données générées, potentiellement sensibles)
 shared/

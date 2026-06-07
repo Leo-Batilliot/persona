@@ -38,9 +38,8 @@
       "position": [520, 120],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT step, pseudo, email, send_hour FROM pending_registrations WHERE session_id = $1 AND expires_at > now() LIMIT 1",
+        "query": "SELECT step, pseudo, email, send_hour FROM pending_registrations WHERE session_id = $1 AND expires_at > now() UNION ALL SELECT NULL, NULL, NULL, NULL LIMIT 1",
         "options": {
-          "alwaysOutputData": true,
           "queryReplacement": "={{ $json.sessionId }}"
         }
       },
@@ -104,7 +103,7 @@
       "position": [1040, 120],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const pending = $input.first().json;\nconst trigger = $('WF2 Input').first().json;\nconst chatInput = (trigger.chatInput || '').trim();\nconst sessionId = trigger.sessionId;\nconst step = pending.step;\n\nlet response = '';\nlet action = 'invalid';\nlet updatePseudo = null;\nlet updateEmail = null;\nlet updatePasswordPlain = null;\nlet updateInterests = null;\nlet updateHour = null;\nlet newStep = step;\n\nconst STEPS = ['ask_pseudo','ask_email','ask_password','ask_interests','ask_hour','ask_consent'];\nconst stepNum = STEPS.indexOf(step) + 1;\n\nswitch (step) {\n  case 'ask_pseudo':\n    if (/^[a-zA-Z0-9_]{3,30}$/.test(chatInput)) {\n      updatePseudo = chatInput;\n      newStep = 'ask_email';\n      action = 'update';\n      response = `Pseudo \"${chatInput}\" noté ! (${stepNum}/6)\\n\\n(Étape 2/6) Quelle est votre adresse email ?`;\n    } else {\n      response = 'Pseudo invalide. Utilisez 3 à 30 caractères (lettres, chiffres, underscore).\\n\\nQuel pseudo souhaitez-vous ?';\n    }\n    break;\n\n  case 'ask_email':\n    if (/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(chatInput)) {\n      updateEmail = chatInput;\n      newStep = 'ask_password';\n      action = 'update';\n      response = `Email \"${chatInput}\" noté. (${stepNum}/6)\\n\\n(Étape 3/6) Choisissez un mot de passe (8 caractères minimum) :`;\n    } else {\n      response = 'Adresse email invalide. Exemple : prenom@domaine.com';\n    }\n    break;\n\n  case 'ask_password':\n    if (chatInput.length >= 8) {\n      updatePasswordPlain = chatInput;\n      newStep = 'ask_interests';\n      action = 'update';\n      response = `Mot de passe enregistré. (${stepNum}/6)\\n\\n(Étape 4/6) Quels sont vos centres d\\'intérêt ?\\n(Ex : IA, science, crypto, finance — séparez par des virgules)`;\n    } else {\n      response = 'Mot de passe trop court. Minimum 8 caractères.';\n    }\n    break;\n\n  case 'ask_interests':\n    var interests = chatInput\n      .split(',')\n      .map(function(i) { return i.trim().toLowerCase(); })\n      .filter(function(i) { return i.length > 0 && i.length <= 50; })\n      .slice(0, 10);\n    if (interests.length > 0) {\n      updateInterests = JSON.stringify(interests);\n      newStep = 'ask_hour';\n      action = 'update';\n      response = `Intérêts : ${interests.join(', ')}. (${stepNum}/6)\\n\\n(Étape 5/6) À quelle heure recevoir votre newsletter ?\\n(Entrez un nombre entre 0 et 23, ex : 8 pour 8h00)`;\n    } else {\n      response = 'Veuillez entrer au moins un centre d\\'intérêt.';\n    }\n    break;\n\n  case 'ask_hour':\n    var hour = parseInt(chatInput, 10);\n    if (!isNaN(hour) && hour >= 0 && hour <= 23) {\n      updateHour = hour;\n      newStep = 'ask_consent';\n      action = 'update';\n      response = `Newsletter prévue à ${hour}h00. (${stepNum}/6)\\n\\n(Étape 6/6) Consentement RGPD requis :\\n\\nPersona stockera votre adresse email pour vous envoyer des newsletters personnalisées. Vous pouvez vous désinscrire à tout moment via le lien en bas de chaque email.\\n\\nTapez OUI pour accepter et créer votre compte, ou NON pour annuler.`;\n    } else {\n      response = 'Heure invalide. Entrez un nombre entre 0 et 23.';\n    }\n    break;\n\n  case 'ask_consent':\n    var answer = chatInput.toLowerCase().replace(/[^a-z]/g, '');\n    if (['oui','yes','ok','jaccepte','accepte','agree'].includes(answer)) {\n      action = 'complete';\n      response = `Compte créé avec succès !\\n\\nBienvenue ${pending.pseudo} !\\nVotre newsletter arrivera chaque jour à ${pending.send_hour}h00.\\n\\nConnectez-vous maintenant :\\nlogin ${pending.pseudo} <votre_mot_de_passe>`;\n    } else if (['non','no','annuler','cancel','refuse'].includes(answer)) {\n      action = 'cancel';\n      response = 'Inscription annulée. Vos données temporaires ont été supprimées.\\n\\nTapez register pour recommencer.';\n    } else {\n      response = 'Répondez par OUI (accepter et créer le compte) ou NON (annuler).';\n    }\n    break;\n\n  default:\n    response = 'Étape inconnue. Tapez register pour recommencer.';\n    action = 'cancel';\n}\n\nreturn [{\n  json: {\n    sessionId,\n    step,\n    newStep,\n    action,\n    response,\n    updatePseudo: updatePseudo || '',\n    updateEmail: updateEmail || '',\n    updatePasswordPlain: updatePasswordPlain || '',\n    updateInterests: updateInterests || '',\n    updateHour: updateHour !== null ? String(updateHour) : '',\n    pendingPseudo: pending.pseudo,\n    pendingEmail: pending.email,\n    pendingSendHour: pending.send_hour\n  }\n}];"
+        "jsCode": "const pending = $input.first().json;\nconst trigger = $('WF2 Input').first().json;\nconst chatInput = (trigger.chatInput || '').trim();\nconst sessionId = trigger.sessionId;\nconst step = pending.step;\n\nlet response = '';\nlet action = 'invalid';\nlet updatePseudo = null;\nlet updateEmail = null;\nlet updatePasswordPlain = null;\nlet updateInterests = null;\nlet updateHour = null;\nlet newStep = step;\n\nconst STEPS = ['ask_pseudo','ask_email','ask_password','ask_interests','ask_hour','ask_consent'];\nconst stepNum = STEPS.indexOf(step) + 1;\n\nswitch (step) {\n  case 'ask_pseudo':\n    if (/^[a-zA-Z0-9_]{3,30}$/.test(chatInput)) {\n      updatePseudo = chatInput;\n      newStep = 'ask_email';\n      action = 'update';\n      response = `Pseudo \"${chatInput}\" noté ! (${stepNum}/6)\\n\\n(Étape 2/6) Quelle est votre adresse email ?`;\n    } else {\n      response = 'Pseudo invalide. Utilisez 3 à 30 caractères (lettres, chiffres, underscore).\\n\\nQuel pseudo souhaitez-vous ?';\n    }\n    break;\n\n  case 'ask_email':\n    if (/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(chatInput)) {\n      updateEmail = chatInput;\n      newStep = 'ask_password';\n      action = 'update';\n      response = `Email \"${chatInput}\" noté. (${stepNum}/6)\\n\\n(Étape 3/6) Choisissez un mot de passe (8 caractères minimum) :`;\n    } else {\n      response = 'Adresse email invalide. Exemple : prenom@domaine.com';\n    }\n    break;\n\n  case 'ask_password':\n    if (chatInput.length >= 8) {\n      updatePasswordPlain = chatInput;\n      newStep = 'ask_interests';\n      action = 'update';\n      response = `Mot de passe enregistré. (${stepNum}/6)\\n\\n(Étape 4/6) Quels sont vos centres d\\'intérêt ?\\n(Ex : IA, science, crypto, finance — séparez par des virgules)`;\n    } else {\n      response = 'Mot de passe trop court. Minimum 8 caractères.';\n    }\n    break;\n\n  case 'ask_interests':\n    var interests = chatInput\n      .split(',')\n      .map(function(i) { return i.trim().toLowerCase(); })\n      .filter(function(i) { return i.length > 0 && i.length <= 50; })\n      .slice(0, 10);\n    if (interests.length > 0) {\n      updateInterests = JSON.stringify(interests);\n      newStep = 'ask_hour';\n      action = 'update';\n      response = `Intérêts : ${interests.join(', ')}. (${stepNum}/6)\\n\\n(Étape 5/6) À quelle heure recevoir votre newsletter ?\\n(Entrez un nombre entre 0 et 23, ex : 8 pour 8h00)`;\n    } else {\n      response = 'Veuillez entrer au moins un centre d\\'intérêt.';\n    }\n    break;\n\n  case 'ask_hour':\n    var hour = parseInt(chatInput, 10);\n    if (!isNaN(hour) && hour >= 0 && hour <= 23) {\n      updateHour = hour;\n      newStep = 'ask_consent';\n      action = 'update';\n      response = `Newsletter prévue à ${hour}h00. (${stepNum}/6)\\n\\n(Étape 6/6) Consentement RGPD requis :\\n\\nPersona stockera votre adresse email pour vous envoyer des newsletters personnalisées. Vous pouvez vous désinscrire à tout moment via le lien en bas de chaque email.\\n\\nTapez OUI pour accepter et créer votre compte, ou NON pour annuler.`;\n    } else {\n      response = 'Heure invalide. Entrez un nombre entre 0 et 23.';\n    }\n    break;\n\n  case 'ask_consent':\n    var answer = chatInput.toLowerCase().replace(/[^a-z]/g, '');\n    if (['oui','yes','ok','jaccepte','accepte','agree'].includes(answer)) {\n      action = 'complete';\n      response = `Compte créé avec succès !\\n\\nBienvenue ${pending.pseudo} !\\nVotre newsletter arrivera chaque jour à ${pending.send_hour}h00.\\n\\nConnectez-vous maintenant :\\nlogin ${pending.pseudo} <votre_mot_de_passe>`;\n    } else if (['non','no','annuler','cancel','refuse'].includes(answer)) {\n      action = 'cancel';\n      response = 'Inscription annulée. Vos données temporaires ont été supprimées.\\n\\nTapez register pour recommencer.';\n    } else {\n      response = 'Répondez par OUI (accepter et créer le compte) ou NON (annuler).';\n    }\n    break;\n\n  default:\n    response = 'Étape inconnue. Tapez register pour recommencer.';\n    action = 'cancel';\n}\n\nreturn [{\n  json: {\n    sessionId,\n    step,\n    newStep,\n    action,\n    response,\n    updatePseudo: updatePseudo || ' ',\n    updateEmail: updateEmail || ' ',\n    updatePasswordPlain: updatePasswordPlain || ' ',\n    updateInterests: updateInterests || ' ',\n    updateHour: updateHour !== null ? String(updateHour) : ' ',\n    pendingPseudo: pending.pseudo,\n    pendingEmail: pending.email,\n    pendingSendHour: pending.send_hour\n  }\n}];"
       }
     },
     {
@@ -116,42 +115,42 @@
       "parameters": {
         "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "outputKey": "0",
               "conditions": {
                 "options": {"caseSensitive": false, "typeValidation": "loose"},
                 "conditions": [{"id": "r1", "leftValue": "={{ $json.action }}", "rightValue": "invalid", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
-              }
+              },
+              "outputKey": "invalid"
             },
             {
-              "outputKey": "1",
               "conditions": {
                 "options": {"caseSensitive": false, "typeValidation": "loose"},
                 "conditions": [{"id": "r2", "leftValue": "={{ $json.action }}", "rightValue": "update", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
-              }
+              },
+              "outputKey": "update"
             },
             {
-              "outputKey": "2",
               "conditions": {
                 "options": {"caseSensitive": false, "typeValidation": "loose"},
                 "conditions": [{"id": "r3", "leftValue": "={{ $json.action }}", "rightValue": "complete", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
-              }
+              },
+              "outputKey": "complete"
             },
             {
-              "outputKey": "3",
               "conditions": {
                 "options": {"caseSensitive": false, "typeValidation": "loose"},
                 "conditions": [{"id": "r4", "leftValue": "={{ $json.action }}", "rightValue": "cancel", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
-              }
+              },
+              "outputKey": "cancel"
             }
           ]
         },
-        "fallbackOutput": "extra"
+        "options": {"fallbackOutput": "extra"}
       }
     },
     {
@@ -176,7 +175,7 @@
       "position": [1560, 120],
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE pending_registrations SET pseudo = COALESCE(NULLIF($1,''), pseudo), email = COALESCE(NULLIF($2,''), email), password_hash = CASE WHEN NULLIF($3,'') IS NOT NULL THEN crypt(NULLIF($3,''), gen_salt('bf')) ELSE password_hash END, interests = CASE WHEN NULLIF($4,'') IS NOT NULL THEN NULLIF($4,'')::jsonb ELSE interests END, send_hour = COALESCE(NULLIF($5,'')::integer, send_hour), step = $6 WHERE session_id = $7",
+        "query": "UPDATE pending_registrations SET pseudo = COALESCE(NULLIF($1::text,''), pseudo), email = COALESCE(NULLIF($2::text,''), email), password_hash = CASE WHEN NULLIF($3::text,'') IS NOT NULL THEN crypt(NULLIF($3::text,''), gen_salt('bf')) ELSE password_hash END, interests = CASE WHEN NULLIF($4::text,'') IS NOT NULL THEN NULLIF($4::text,'')::jsonb ELSE interests END, send_hour = COALESCE(NULLIF($5::text,'')::integer, send_hour), step = $6::text WHERE session_id = $7::text RETURNING step",
         "options": {
           "queryReplacement": "={{ $json.updatePseudo }},={{ $json.updateEmail }},={{ $json.updatePasswordPlain }},={{ $json.updateInterests }},={{ $json.updateHour }},={{ $json.newStep }},={{ $json.sessionId }}"
         }
@@ -192,7 +191,7 @@
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [{"id": "s3", "name": "output", "value": "={{ $json.response }}", "type": "string"}]
+          "assignments": [{"id": "s3", "name": "output", "value": "={{ $('Process Step').first().json.response }}", "type": "string"}]
         },
         "includeOther": false
       }
@@ -205,9 +204,8 @@
       "position": [1560, 300],
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO users (pseudo, email, password_hash, interests, send_hour, consent_given, consent_at) SELECT pseudo, email, password_hash, interests, send_hour, true, now() FROM pending_registrations WHERE session_id = $1 ON CONFLICT (pseudo) DO NOTHING RETURNING id::text, pseudo, email",
+        "query": "WITH ins AS (INSERT INTO users (pseudo, email, password_hash, interests, send_hour, consent_given, consent_at) SELECT pseudo, email, password_hash, interests, send_hour, true, now() FROM pending_registrations WHERE session_id = $1 ON CONFLICT (pseudo) DO NOTHING RETURNING id::text, pseudo, email) SELECT id, pseudo, email FROM ins UNION ALL SELECT NULL, NULL, NULL LIMIT 1",
         "options": {
-          "alwaysOutputData": true,
           "queryReplacement": "={{ $('WF2 Input').first().json.sessionId }}"
         }
       },
@@ -326,34 +324,34 @@
       "parameters": {
         "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "outputKey": "0",
               "conditions": {
                 "options": {"caseSensitive": false, "typeValidation": "loose"},
                 "conditions": [{"id": "r5", "leftValue": "={{ $json.updateType }}", "rightValue": "email", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
-              }
+              },
+              "outputKey": "email"
             },
             {
-              "outputKey": "1",
               "conditions": {
                 "options": {"caseSensitive": false, "typeValidation": "loose"},
                 "conditions": [{"id": "r6", "leftValue": "={{ $json.updateType }}", "rightValue": "interests", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
-              }
+              },
+              "outputKey": "interests"
             },
             {
-              "outputKey": "2",
               "conditions": {
                 "options": {"caseSensitive": false, "typeValidation": "loose"},
                 "conditions": [{"id": "r7", "leftValue": "={{ $json.updateType }}", "rightValue": "hour", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
-              }
+              },
+              "outputKey": "hour"
             }
           ]
         },
-        "fallbackOutput": "extra"
+        "options": {"fallbackOutput": "extra"}
       }
     },
     {
@@ -364,7 +362,7 @@
       "position": [1040, 400],
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE users SET email = $1, updated_at = now() WHERE id = $2::uuid",
+        "query": "UPDATE users SET email = $1::text, updated_at = now() WHERE id = $2::uuid RETURNING id::text",
         "options": {
           "queryReplacement": "={{ $json.updateValue }},={{ $json.userId }}"
         }
@@ -380,7 +378,7 @@
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [{"id": "s7", "name": "output", "value": "={{ 'Email mis à jour : ' + $json.updateValue }}", "type": "string"}]
+          "assignments": [{"id": "s7", "name": "output", "value": "={{ 'Email mis à jour : ' + $('Parse Pref Update').first().json.updateValue }}", "type": "string"}]
         },
         "includeOther": false
       }
@@ -393,7 +391,7 @@
       "position": [1040, 520],
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE users SET interests = $1::jsonb, updated_at = now() WHERE id = $2::uuid",
+        "query": "UPDATE users SET interests = $1::jsonb, updated_at = now() WHERE id = $2::uuid RETURNING id::text",
         "options": {
           "queryReplacement": "={{ $json.updateValue }},={{ $json.userId }}"
         }
@@ -409,7 +407,7 @@
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [{"id": "s8", "name": "output", "value": "={{ 'Centres d\\'intérêt mis à jour : ' + JSON.parse($json.updateValue).join(', ') }}", "type": "string"}]
+          "assignments": [{"id": "s8", "name": "output", "value": "={{ 'Centres d\\'intérêt mis à jour : ' + JSON.parse($('Parse Pref Update').first().json.updateValue).join(', ') }}", "type": "string"}]
         },
         "includeOther": false
       }
@@ -422,7 +420,7 @@
       "position": [1040, 640],
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE users SET send_hour = $1::integer, updated_at = now() WHERE id = $2::uuid",
+        "query": "UPDATE users SET send_hour = $1::integer, updated_at = now() WHERE id = $2::uuid RETURNING id::text",
         "options": {
           "queryReplacement": "={{ $json.updateValue }},={{ $json.userId }}"
         }
@@ -438,7 +436,7 @@
       "parameters": {
         "mode": "manual",
         "assignments": {
-          "assignments": [{"id": "s9", "name": "output", "value": "={{ 'Heure d\\'envoi mise à jour : ' + $json.updateValue + 'h00' }}", "type": "string"}]
+          "assignments": [{"id": "s9", "name": "output", "value": "={{ 'Heure d\\'envoi mise à jour : ' + $('Parse Pref Update').first().json.updateValue + 'h00' }}", "type": "string"}]
         },
         "includeOther": false
       }

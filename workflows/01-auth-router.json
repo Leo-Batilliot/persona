@@ -29,9 +29,8 @@
       "position": [520, 300],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT step FROM pending_registrations WHERE session_id = $1 AND expires_at > now() LIMIT 1",
+        "query": "SELECT step FROM pending_registrations WHERE session_id = $1::text AND expires_at > now() UNION ALL SELECT NULL LIMIT 1",
         "options": {
-          "alwaysOutputData": true,
           "queryReplacement": "={{ $json.sessionId }}"
         }
       },
@@ -103,9 +102,8 @@
       "position": [1040, 440],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT user_id::text, pseudo, role FROM sessions WHERE session_id = $1 AND expires_at > now() LIMIT 1",
+        "query": "SELECT user_id::text, pseudo, role FROM sessions WHERE session_id = $1 AND expires_at > now() UNION ALL SELECT NULL, NULL, NULL LIMIT 1",
         "options": {
-          "alwaysOutputData": true,
           "queryReplacement": "={{ $('Parse Input').first().json.sessionId }}"
         }
       },
@@ -178,16 +176,16 @@
       "parameters": {
         "mode": "rules",
         "rules": {
-          "rules": [
-            {"outputKey": "0", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r1", "leftValue": "={{ $json.intent }}", "rightValue": "register", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
-            {"outputKey": "1", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r2", "leftValue": "={{ $json.intent }}", "rightValue": "update_prefs", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
-            {"outputKey": "2", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r3", "leftValue": "={{ $json.intent }}", "rightValue": "newsletter", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
-            {"outputKey": "3", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r4", "leftValue": "={{ $json.intent }}", "rightValue": "unsubscribe", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
-            {"outputKey": "4", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r5", "leftValue": "={{ $json.intent }}", "rightValue": "help", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}},
-            {"outputKey": "5", "conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r6", "leftValue": "={{ $json.intent }}", "rightValue": "status", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}}
+          "values": [
+            {"conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r1", "leftValue": "={{ $json.intent }}", "rightValue": "register", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}, "outputKey": "register"},
+            {"conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r2", "leftValue": "={{ $json.intent }}", "rightValue": "update_prefs", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}, "outputKey": "update_prefs"},
+            {"conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r3", "leftValue": "={{ $json.intent }}", "rightValue": "newsletter", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}, "outputKey": "newsletter"},
+            {"conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r4", "leftValue": "={{ $json.intent }}", "rightValue": "unsubscribe", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}, "outputKey": "unsubscribe"},
+            {"conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r5", "leftValue": "={{ $json.intent }}", "rightValue": "help", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}, "outputKey": "help"},
+            {"conditions": {"options": {"caseSensitive": false, "typeValidation": "loose"}, "conditions": [{"id": "r6", "leftValue": "={{ $json.intent }}", "rightValue": "status", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}, "outputKey": "status"}
           ]
         },
-        "fallbackOutput": "extra"
+        "options": {"fallbackOutput": "extra"}
       }
     },
     {
@@ -290,9 +288,8 @@
       "position": [1820, 560],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT id::text AS user_id, pseudo, role FROM users WHERE pseudo = $1 AND password_hash = crypt($2, password_hash) AND is_active = true LIMIT 1",
+        "query": "SELECT id::text AS user_id, pseudo, role FROM users WHERE pseudo = $1 AND password_hash = crypt($2, password_hash) AND is_active = true UNION ALL SELECT NULL, NULL, NULL LIMIT 1",
         "options": {
-          "alwaysOutputData": true,
           "queryReplacement": "={{ $('Parse Input').first().json.loginPseudo }},={{ $('Parse Input').first().json.loginPassword }}"
         }
       },
@@ -392,7 +389,7 @@
       "name": "Please Login",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1820, 760],
+      "position": [2340, 860],
       "parameters": {
         "mode": "manual",
         "assignments": {
@@ -409,9 +406,8 @@
       "position": [2600, 840],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT pseudo, email, interests, send_hour, created_at::date::text AS since FROM users WHERE id = $1::uuid AND is_active = true LIMIT 1",
+        "query": "SELECT pseudo, email, interests, send_hour, created_at::date::text AS since FROM users WHERE id = $1::uuid AND is_active = true UNION ALL SELECT NULL, NULL, NULL, NULL, NULL LIMIT 1",
         "options": {
-          "alwaysOutputData": true,
           "queryReplacement": "={{ $json.user_id }}"
         }
       },
@@ -426,6 +422,59 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "const user = $input.first().json;\nif (!user.pseudo) {\n  return [{ json: { output: 'Impossible de récupérer votre profil. Essayez de vous reconnecter.' } }];\n}\nconst interests = Array.isArray(user.interests) && user.interests.length > 0\n  ? user.interests.join(', ')\n  : 'tous (aucun filtre)';\nconst hour = user.send_hour !== null && user.send_hour !== undefined\n  ? user.send_hour + 'h00'\n  : 'non défini';\nreturn [{\n  json: {\n    output: 'Votre profil Persona :\\n\\n• Pseudo : ' + user.pseudo + '\\n• Email : ' + (user.email || 'non défini') + '\\n• Intérêts : ' + interests + '\\n• Newsletter à : ' + hour + '\\n• Membre depuis : ' + (user.since || '?') + '\\n\\nPour modifier, tapez : modifier préférences'\n  }\n}];"
+      }
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000030",
+      "name": "Register Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1820, 760],
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [
+            {"id": "c4", "leftValue": "={{ $('Parse Input').first().json.isRegisterIntent }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000031",
+      "name": "New Registration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2080, 980],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {"id": "y1", "name": "intent", "value": "register", "type": "string"},
+            {"id": "y2", "name": "chatInput", "value": "={{ $('Parse Input').first().json.chatInput }}", "type": "string"},
+            {"id": "y3", "name": "sessionId", "value": "={{ $('Parse Input').first().json.sessionId }}", "type": "string"},
+            {"id": "y4", "name": "user_id", "value": "", "type": "string"},
+            {"id": "y5", "name": "pseudo", "value": "", "type": "string"},
+            {"id": "y6", "name": "role", "value": "user", "type": "string"}
+          ]
+        },
+        "includeOther": false
+      }
+    },
+    {
+      "id": "aa000001-0001-4000-8000-000000000032",
+      "name": "Start Registration",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2340, 980],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "value": "0",
+          "__rl": true,
+          "mode": "id"
+        },
+        "options": {"waitForSubWorkflow": true}
       }
     }
   ],
@@ -483,8 +532,17 @@
     "Login Command?": {
       "main": [
         [{"node": "Authenticate User", "type": "main", "index": 0}],
+        [{"node": "Register Command?", "type": "main", "index": 0}]
+      ]
+    },
+    "Register Command?": {
+      "main": [
+        [{"node": "New Registration", "type": "main", "index": 0}],
         [{"node": "Please Login", "type": "main", "index": 0}]
       ]
+    },
+    "New Registration": {
+      "main": [[{"node": "Start Registration", "type": "main", "index": 0}]]
     },
     "Authenticate User": {
       "main": [[{"node": "Auth Success?", "type": "main", "index": 0}]]

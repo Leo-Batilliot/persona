@@ -43,10 +43,9 @@
       "position": [520, 160],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT id::text, email, pseudo FROM users WHERE unsubscribe_token = $1::uuid AND is_active = true",
+        "query": "SELECT id::text, email, pseudo FROM users WHERE unsubscribe_token = $1::uuid AND is_active = true UNION ALL SELECT NULL, NULL, NULL LIMIT 1",
         "options": {
-          "queryReplacement": "={{ $('Webhook').first().json.query.token }}",
-          "alwaysOutputData": true
+          "queryReplacement": "={{ $('Webhook').first().json.query.token }}"
         }
       },
       "credentials": {"postgres": {"id": "1", "name": "persona-db"}}
